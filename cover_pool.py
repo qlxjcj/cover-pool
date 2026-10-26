@@ -123,38 +123,42 @@ class CoverPool(gl.Contract):
 
     # ---------------- the block clock, as a boolean ----------------
 
-    def _tip(self) -> int:
-        """The fresher of the two tips, or 0 when either is unreadable."""
+    def _tip_ok(self, block: int, before: bool) -> bool:
+        """True when both providers say so.
+
+        The consensus binds this boolean, never a tip value: two honest
+        providers can read heights a block apart, and a block can land between
+        two validators' reads, so comparing numbers here would fail every time
+        the chain moves during a vote."""
         payload = json.dumps({"jsonrpc": "2.0", "id": 1,
                               "method": "eth_blockNumber", "params": []})
 
         def run() -> int:
             a = 0
             b = 0
-            try:
-                a = self._hex_int(self._body(gl.nondet.web.post(
-                    RPC_A + "tip", body=payload, headers=HDR)))
-            except Exception:
-                a = 0
-            try:
-                b = self._hex_int(self._body(gl.nondet.web.post(
-                    RPC_B + "tip", body=payload, headers=HDR)))
-            except Exception:
-                b = 0
+            for _ in range(2):
+                if a <= 0:
+                    try:
+                        a = self._hex_int(self._body(gl.nondet.web.post(
+                            RPC_A + "tip", body=payload, headers=HDR)))
+                    except Exception:
+                        a = 0
+                if b <= 0:
+                    try:
+                        b = self._hex_int(self._body(gl.nondet.web.post(
+                            RPC_B + "tip", body=payload, headers=HDR)))
+                    except Exception:
+                        b = 0
             if a <= 0 or b <= 0:
                 return 0
-            return a if a > b else b
+            fresher = a if a > b else b
+            ok = fresher < int(block) if before else fresher > int(block)
+            return 1 if ok else 0
 
         def agrees(leader) -> bool:
             return isinstance(leader, gl.vm.Return) and int(leader.calldata) == run()
 
-        return int(gl.vm.run_nondet_unsafe(run, agrees))
-
-    def _tip_ok(self, block: int, before: bool) -> bool:
-        t = self._tip()
-        if t <= 0:
-            return False
-        return t < int(block) if before else t > int(block)
+        return int(gl.vm.run_nondet_unsafe(run, agrees)) == 1
 
     # ---------------- one transaction, as two providers saw it ----------------
 

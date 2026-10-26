@@ -11,7 +11,11 @@ trigger costs the underwriter money. **Buyers** choose a coverage amount and pay
 the exact premium; if the event is proven they are paid out of the pool, and if
 it is not they lose only the premium.
 
-Deployed on GenLayer Bradbury: **(filled after the deploy)**
+Deployed on GenLayer Asimov: **(filled after the deploy)**
+
+> Bradbury was reset to Phase 2 (chain id 4221) in October 2026: the earlier
+> contracts are gone and both local accounts read 0 GEN there, while the same
+> account still holds funds on Asimov. This deployment is therefore on Asimov.
 
 ---
 
@@ -32,23 +36,28 @@ transaction must have succeeded, and the sender must be exactly the watched
 address. Nothing else counts, and there is no way to amend the terms: they are
 written into the pool at `open_pool` and never change.
 
-## Why two indexers, and why no clock
+## Why two providers, and why no clock
 
-The event is read from **two independent indexers**:
+The event is read from **two independent JSON-RPC operators**, each asked for the
+same two calls:
 
-| indexer | endpoint | shape |
+| call | gives | used for |
 |---|---|---|
-| blockscout | `eth.blockscout.com/api/v2/transactions/<txid>` | `block_number`, `from.hash`, `to.hash`, `value` (decimal), `result` |
-| routescan | `api.routescan.io/.../etherscan/api?module=proxy&action=eth_getTransactionByHash` | `blockNumber`, `from`, `to`, `value` (hex) |
+| `eth_getTransactionByHash(txid)` | `blockNumber`, `from`, `to`, `value` | the transfer |
+| `eth_getTransactionReceipt(txid)` | `status` | success |
 
 Both must report the transaction, and both must agree on **five facts**: sender,
 recipient, value, block, and success. One disagreement is enough to refuse, and
 the reason is written on chain.
 
-**No timestamp is ever read.** In the live data below the two indexers' tips were
-517 blocks apart (about 1.7 hours), and a wall clock is exactly the kind of fact
-two honest operators never agree on. So the contract's own "clock" is a
-**boolean over block heights**:
+The trailing `?m=tx` / `?m=rc` / `?m=tip` on each URL only distinguishes the
+calls in logs and in the test harness; RPC servers ignore unknown query
+parameters.
+
+**No timestamp is ever read.** Two operators legitimately report tips that differ
+(one sample was 517 blocks apart, another matched exactly), and a wall clock is
+the kind of fact two honest operators never agree on. So the contract's own
+"clock" is a **boolean over block heights**:
 
 - `open_pool` refuses a window that has already started;
 - `buy_cover` refuses once the fresher tip has reached `from_block`;
@@ -92,7 +101,7 @@ first-come. The underwriter receives exactly what is left.
 
 ```
 paid_total + refunded == funded + premium_total     on every path
-contract balance == 0                               after the last pool closes
+held == 0                                          once a pool is closed
 ```
 
 ## Lifecycle
@@ -118,10 +127,10 @@ cancel      (underwriter, nothing sold, pre-window)  -> CLOSED
 
 ## Trust boundaries, stated plainly
 
-1. **The indexers are the oracle.** They are contract constants, so neither
-   party can point them at a server it controls, but a dishonest indexer is still
-   a single point of failure — hence two of them, and fail-closed on any
-   disagreement.
+1. **The two providers are the oracle.** They are contract constants, so neither
+   party can point them at a server it controls, but a lying provider is still a
+   risk — hence two of them, and fail-closed on any disagreement. If either
+   provider is unreachable the call fails closed with a recorded reason.
 2. **Ownership of the watched address is not provable on chain.** If a buyer
    controls the watched address it can trigger the pool itself. The underwriter
    chooses the address, and the contract rejects a buyer equal to it, but it
@@ -143,7 +152,7 @@ cancel      (underwriter, nothing sold, pre-window)  -> CLOSED
 |---|---|
 | `open_pool(trigger_address, threshold, from_block, to_block, premium_bps, capacity)` | **payable**; the value is `funded`. Window must be in the future |
 | `buy_cover(pool_id, coverage)` | **payable**; must equal `coverage * bps // 10000`; sales stop at `from_block` |
-| `observe(pool_id, txid)` | covered addresses only; two indexers must agree on five facts |
+| `observe(pool_id, txid)` | covered addresses only; two providers must agree on five facts |
 | `claim(pool_id)` | pro rata from `funded`, capped at coverage, once per address |
 | `close(pool_id)` | residual to the underwriter; waits for the filing grace / lapse |
 | `cancel(pool_id)` | underwriter only, nothing sold, before the window |
@@ -159,15 +168,14 @@ python -m pytest tests -q
 ```
 
 **68 tests** in `tests/direct/test_cover_pool.py`, in eight groups: the unit
-model, pool creation, premiums and capacity, the two-indexer claim, every
+model, pool creation, premiums and capacity, the two-provider claim, every
 refusal (missing source, block/transfer/value/success disagreement, failed
 transaction, outside the window, wrong sender, self-transfer, below threshold),
 consensus agreement, pro-rata payouts, the exits, and the invariants (refusals
 change nothing, money is conserved, views are strings).
 
-The fixtures in `tests/direct/conftest.py` use the **real payload shapes** of
-both indexers, including the hex-encoded routescan proxy envelope and the
-decimal-string blockscout envelope.
+The fixtures in `tests/direct/conftest.py` use the **real JSON-RPC envelopes**
+for both calls, including the hex-encoded `blockNumber` / `value` / `status`.
 
 ## Live
 
