@@ -21,7 +21,7 @@ FILING_BLOCKS = 1200
 # Two independent JSON-RPC operators. The trailing marker only distinguishes
 # the two calls per operator; RPC servers ignore unknown query parameters.
 RPC_A = "https://ethereum-rpc.publicnode.com/?m="
-RPC_B = "https://1rpc.io/eth?m="
+RPC_B = "https://eth.drpc.org/?m="
 HDR = {"content-type": "application/json"}
 
 

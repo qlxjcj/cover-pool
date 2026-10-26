@@ -63,16 +63,16 @@ def remock(vm, a_tx=None, a_rc=None, b_tx=None, b_rc=None, tip_a=TIP, tip_b=TIP)
     vm.mock_web(r".*publicnode\.com/\?m=rc.*",
                 {"method": "POST", "status": 200,
                  "body": a_rc if a_rc is not None else rc_body()})
-    vm.mock_web(r".*1rpc\.io/eth\?m=tx.*",
+    vm.mock_web(r".*drpc\.org/\?m=tx.*",
                 {"method": "POST", "status": 200,
                  "body": b_tx if b_tx is not None else tx_body()})
-    vm.mock_web(r".*1rpc\.io/eth\?m=rc.*",
+    vm.mock_web(r".*drpc\.org/\?m=rc.*",
                 {"method": "POST", "status": 200,
                  "body": b_rc if b_rc is not None else rc_body()})
     vm.mock_web(r".*publicnode\.com/\?m=tip.*",
                 {"method": "POST", "status": 200,
                  "body": json.dumps({"jsonrpc": "2.0", "id": 1, "result": hx(tip_a)})})
-    vm.mock_web(r".*1rpc\.io/eth\?m=tip.*",
+    vm.mock_web(r".*drpc\.org/\?m=tip.*",
                 {"method": "POST", "status": 200,
                  "body": json.dumps({"jsonrpc": "2.0", "id": 1, "result": hx(tip_b)})})
 
