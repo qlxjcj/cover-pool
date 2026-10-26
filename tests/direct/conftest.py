@@ -75,9 +75,9 @@ def remock(vm, bs=None, tx=None, rc=None, bs_tip=TIP, rs_tip=TIP):
     if rc is not None:
         vm.mock_web(r".*action=eth_getTransactionReceipt.*",
                     {"method": "GET", "status": 200, "body": rc})
-    vm.mock_web(r".*blockscout\.com/api\?module=block.*",
+    vm.mock_web(r".*blockscout\.com/api/v2/main-page/blocks.*",
                 {"method": "GET", "status": 200,
-                 "body": json.dumps({"jsonrpc": "2.0", "result": hx(bs_tip), "id": 1})})
+                 "body": json.dumps([{"height": bs_tip}])})
     vm.mock_web(r".*action=eth_blockNumber.*",
                 {"method": "GET", "status": 200,
                  "body": json.dumps({"jsonrpc": "2.0", "result": hx(rs_tip), "id": 1})})

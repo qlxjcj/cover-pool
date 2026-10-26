@@ -2,13 +2,11 @@
 import json
 from genlayer import *
 
-# Two ledgers, one scale each, never converted: GEN escrow on GenLayer in wei
-# (10**18) and the watched ETH transfer on Ethereum in wei (10**18). The
-# threshold is compared with the transfer value directly; nothing is priced.
+# GEN escrow on GenLayer in wei (10**18); the watched ETH transfer in wei
+# (10**18). The threshold is compared with the transfer value directly.
 #
-# There is no clock here. Every time signal is a block height read from two
-# independent indexers: their tips legitimately differ by hundreds of blocks,
-# so each guard is a boolean, never a timestamp.
+# No clock: every time signal is a block height from two indexers, and each
+# guard is a boolean - their tips can differ by hundreds of blocks.
 
 GEN_DECIMALS = 18
 ETH_DECIMALS = 18
@@ -21,7 +19,7 @@ LAPSE_BLOCKS = 100000
 FILING_BLOCKS = 1200
 
 BS_TX = "https://eth.blockscout.com/api/v2/transactions/"
-BS_TIP = "https://eth.blockscout.com/api?module=block&action=eth_block_number"
+BS_TIP = "https://eth.blockscout.com/api/v2/main-page/blocks"
 RS = "https://api.routescan.io/v2/network/mainnet/evm/1/etherscan/api"
 RS_TX = RS + "?module=proxy&action=eth_getTransactionByHash&txhash="
 RS_RC = RS + "?module=proxy&action=eth_getTransactionReceipt&txhash="
@@ -29,13 +27,12 @@ RS_TIP = RS + "?module=proxy&action=eth_blockNumber"
 
 
 class CoverPool(gl.Contract):
-    """Solvency-capped cover pool for one on-chain event.
+    """Solvency-capped cover for one on-chain event.
 
     The underwriter funds it and freezes the only event that can pay: one
     watched address sending at least `threshold` wei in one successful
-    transaction inside one block range. Buyers pay a premium, and are paid pro
-    rata from the pool if it happens. Nobody votes; two independent indexers
-    must agree on the five facts."""
+    transaction inside one block range. Buyers pay a premium and are paid pro
+    rata if it happens; nobody votes, and two indexers must agree."""
 
     pools: TreeMap[str, str]
     positions: TreeMap[str, str]
@@ -127,13 +124,23 @@ class CoverPool(gl.Contract):
 
     # ---------------- the block clock, as a boolean ----------------
 
+    def _bs_height(self, body: str) -> int:
+        try:
+            blocks = json.loads(body)
+        except Exception:
+            return 0
+        if not isinstance(blocks, list) or not blocks:
+            return 0
+        h = blocks[0].get("height") if isinstance(blocks[0], dict) else None
+        return h if isinstance(h, int) and h > 0 else 0
+
     def _tip(self) -> int:
         """The fresher of the two tips, or 0 when either is unreadable."""
         def run() -> int:
             a = 0
             b = 0
             try:
-                a = self._hex_int(self._body(gl.nondet.web.get(BS_TIP)))
+                a = self._bs_height(self._body(gl.nondet.web.get(BS_TIP)))
             except Exception:
                 a = 0
             try:
