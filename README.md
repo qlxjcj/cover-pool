@@ -180,29 +180,62 @@ for both calls, including the hex-encoded `blockNumber` / `value` / `status`.
 
 ## Live
 
-Verified on GenLayer Asimov against `0x22f4c7F8035383C4C1E98ff64521dC535Eb8d456`. Every step below is
-read back from chain state, not from receipts.
+Verified on GenLayer Asimov against `0x22f4c7F8035383C4C1E98ff64521dC535Eb8d456`. Every number
+below is read back from chain state, not from receipts.
 
-### `p0` — the pool that pays
+### `p0` — a real transfer triggered it, and the shortfall was shared
 
 | step | result |
 |---|---|
-| `open_pool` | `funded` **0.005 GEN**, `capacity` **0.02 GEN** → `collateral_bps` 2500 |
-| `buy_cover` (buyer 1) | 0.0005 GEN premium for **0.01 GEN** cover |
-| `buy_cover` (buyer 2) | 0.0005 GEN premium for **0.01 GEN** cover |
-| state | `coverage_total` **0.02 GEN**, `premium_total` **0.001 GEN** |
+| `open_pool` | `funded` **0.005 GEN**, `capacity` **0.02 GEN** → `collateral_bps` **2500** |
+| `buy_cover` ×2 | 0.0005 GEN premium each (500 bps) for **0.01 GEN** cover each |
+| window | `[26275672, 26276022]`, watched `0x264bd829…`, threshold **0.01 ETH** |
+| the event | **0.01724956 ETH** → `0x0359035f…` at block **26275688** |
+| `observe` | **TRIGGERED** |
+| `claim` ×2 | **0.0025 GEN** each |
+| `close` | underwriter received **0.001 GEN**, `held` **0** |
 
-Window `[26275672, 26276022]`, watched address `0x264bd829…`, threshold **0.01 ETH**, premium 500 bps.
+The evidence both providers reported, byte for byte:
 
-The pool is deliberately under-funded: 0.02 GEN of cover sits behind 0.005 GEN of capital, so if the
-event is proven each buyer is owed 0.01 GEN but the pool can only pay 50% of it, and the two claims
-must share the shortfall pro rata rather than race for it.
+```
+publicnode   found  0x264bd829…  0x0359035f…  17249560000000000 wei  26275688  success
+drpc         found  0x264bd829…  0x0359035f…  17249560000000000 wei  26275688  success
+```
 
-The settlement half of this run — a real transfer inside the window, `observe`, the pro-rata claims,
-`close` — was still executing when this README was last updated, because the Asimov RPC drops writes
-for minutes at a time. The same sequence is asserted end to end by
-`test_a_shortfall_is_shared_pro_rata`, `test_two_pools_never_mix_funds` and
-`test_money_is_conserved_on_every_path`.
+That transfer is a real Ethereum transaction —
+[`0x6f30a29d2df247353fad53339d5e888f1580376eee66d3152940e85927eb80de`](https://etherscan.io/tx/0x6f30a29d2df247353fad53339d5e888f1580376eee66d3152940e85927eb80de),
+chosen by neither party, and it is exactly what makes the pool pay.
+
+The pool was deliberately under-funded: 0.02 GEN of cover behind 0.005 GEN of capital. Each buyer
+was owed 0.01 GEN, the pool could pay half of that, so each claim was
+
+```
+payout = coverage * funded / coverage_total = 0.01 * 0.005 / 0.02 = 0.0025 GEN
+```
+
+and the conservation check held:
+
+```
+paid 0.005 + refunded 0.001 == funded 0.005 + premiums 0.001   ✓
+```
+
+`close` returned exactly the 0.001 GEN of premiums and nothing was left behind.
+
+### `p1` — a pool that sold nothing
+
+Funded 0.01 GEN with no cover sold, cancelled before its window opened:
+
+```
+status    CLOSED      reason  cancelled before the window opened
+funded    0.01 GEN    paid    0
+refunded  0.01 GEN    held    0
+```
+
+The cancel itself was sent six times against an Asimov RPC that answered
+`internal error` for a stretch before the one that landed; the pool took the
+first successful call and refused the rest, which is the point of a repeatable
+write. The same path is asserted by
+`test_the_underwriter_cancels_a_pool_that_sold_nothing`.
 
 ## Source integrity
 
