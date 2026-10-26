@@ -470,7 +470,7 @@ class CoverPool(gl.Contract):
     def get_pool(self, pool_id: str) -> str:
         d = self._load(pool_id)
         cap = int(d["capacity"])
-        d["held"] = self._held(d)
+        d["held"] = 0 if str(d["status"]) == CLOSED else self._held(d)
         d["collateral_bps"] = int(d["funded"]) * 10000 // cap if cap > 0 else 0
         return json.dumps(d)
 

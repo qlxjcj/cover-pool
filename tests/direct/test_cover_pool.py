@@ -534,6 +534,7 @@ def test_an_untriggered_pool_returns_everything(pool):
     d = get_pool(vm, c, pid)
     assert d["refunded"] == FUNDED + PREMIUM
     assert d["paid_total"] == 0
+    assert d["held"] == 0
     assert contract_balance(vm) == 0
 
 
