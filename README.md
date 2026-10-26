@@ -193,7 +193,7 @@ below is read back from chain state, not from receipts.
 | the event | **0.01724956 ETH** → `0x0359035f…` at block **26275688** |
 | `observe` | **TRIGGERED** |
 | `claim` ×2 | **0.0025 GEN** each |
-| `close` | underwriter received **0.001 GEN**, `held` **0** |
+| `close` | ledger credits the underwriter **0.001 GEN**, `held` **0** |
 
 The evidence both providers reported, byte for byte:
 
@@ -236,6 +236,21 @@ The cancel itself was sent six times against an Asimov RPC that answered
 first successful call and refused the rest, which is the point of a repeatable
 write. The same path is asserted by
 `test_the_underwriter_cancels_a_pool_that_sold_nothing`.
+
+### What the chain balance says
+
+Both pools report `held == 0` and `paid + refunded == funded + premiums` holds in
+the ledger — but the contract's **native balance is still 0.016 GEN**, which is
+exactly p0's capital plus premiums and p1's capital, and neither buyer's balance
+changed. `emit_transfer` is documented as emitting with `on='finalized'`, and on
+this network the emitted transfer does not reach the recipient's EVM balance;
+this was measured here and in two other contracts, minutes after the writes
+reported `FINALIZED`.
+
+So the **ledger settles exactly and the accounting invariants hold and are what
+the tests prove**; the outbound native transfer is not reflected in balances on
+Asimov. Stating it rather than claiming the money moved, because the balance is
+the one thing that can actually be checked.
 
 ## Source integrity
 
