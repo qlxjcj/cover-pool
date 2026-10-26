@@ -11,7 +11,8 @@ trigger costs the underwriter money. **Buyers** choose a coverage amount and pay
 the exact premium; if the event is proven they are paid out of the pool, and if
 it is not they lose only the premium.
 
-Deployed on GenLayer Asimov: **(filled after the deploy)**
+Deployed on GenLayer Asimov: **`0x22f4c7F8035383C4C1E98ff64521dC535Eb8d456`**
+([explorer](https://explorer-asimov.genlayer.com/address/0x22f4c7F8035383C4C1E98ff64521dC535Eb8d456))
 
 > Bradbury was reset to Phase 2 (chain id 4221) in October 2026: the earlier
 > contracts are gone and both local accounts read 0 GEN there, while the same
@@ -179,11 +180,33 @@ for both calls, including the hex-encoded `blockNumber` / `value` / `status`.
 
 ## Live
 
-**(filled after the deploy)**
+Verified on GenLayer Asimov against `0x22f4c7F8035383C4C1E98ff64521dC535Eb8d456`. Every step below is
+read back from chain state, not from receipts.
+
+### `p0` — the pool that pays
+
+| step | result |
+|---|---|
+| `open_pool` | `funded` **0.005 GEN**, `capacity` **0.02 GEN** → `collateral_bps` 2500 |
+| `buy_cover` (buyer 1) | 0.0005 GEN premium for **0.01 GEN** cover |
+| `buy_cover` (buyer 2) | 0.0005 GEN premium for **0.01 GEN** cover |
+| state | `coverage_total` **0.02 GEN**, `premium_total` **0.001 GEN** |
+
+Window `[26275672, 26276022]`, watched address `0x264bd829…`, threshold **0.01 ETH**, premium 500 bps.
+
+The pool is deliberately under-funded: 0.02 GEN of cover sits behind 0.005 GEN of capital, so if the
+event is proven each buyer is owed 0.01 GEN but the pool can only pay 50% of it, and the two claims
+must share the shortfall pro rata rather than race for it.
+
+The settlement half of this run — a real transfer inside the window, `observe`, the pro-rata claims,
+`close` — was still executing when this README was last updated, because the Asimov RPC drops writes
+for minutes at a time. The same sequence is asserted end to end by
+`test_a_shortfall_is_shared_pro_rata`, `test_two_pools_never_mix_funds` and
+`test_money_is_conserved_on_every_path`.
 
 ## Source integrity
 
 ```
-sha256  (filled after the deploy)
-bytes   (filled after the deploy)
+sha256  1c375e5e51c797ec999ec8319b5fd5785e30e789b3d2545c063465265b32efbb
+bytes   19391
 ```
