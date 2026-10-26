@@ -45,14 +45,15 @@ def hx(n: int) -> str:
 
 
 def tx_body(txid=TXID, frm=TRIGGER, to=DEST, value=VALUE, block=TX_BLOCK):
+    # RPC providers return and expect the 0x-prefixed form of the hash
     return json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
-        "hash": txid, "blockNumber": hx(block), "from": frm, "to": to,
+        "hash": "0x" + txid, "blockNumber": hx(block), "from": frm, "to": to,
         "value": hex(value)}})
 
 
 def rc_body(txid=TXID, ok=True):
     return json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
-        "transactionHash": txid, "status": "0x1" if ok else "0x0"}})
+        "transactionHash": "0x" + txid, "status": "0x1" if ok else "0x0"}})
 
 
 def remock(vm, a_tx=None, a_rc=None, b_tx=None, b_rc=None, tip_a=TIP, tip_b=TIP):

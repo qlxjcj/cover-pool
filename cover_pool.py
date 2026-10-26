@@ -175,9 +175,9 @@ class CoverPool(gl.Contract):
         rc = rc.get("result")
         if not isinstance(tx, dict) or not isinstance(rc, dict):
             return out
-        if str(tx.get("hash", "")).lower() != txid:
+        if str(tx.get("hash", "")).lower() != "0x" + txid:
             return out
-        if str(rc.get("transactionHash", "")).lower() != txid:
+        if str(rc.get("transactionHash", "")).lower() != "0x" + txid:
             return out
         blk = tx.get("blockNumber")
         if not isinstance(blk, str) or not blk.startswith("0x"):
@@ -334,9 +334,9 @@ class CoverPool(gl.Contract):
             raise gl.vm.UserError("txid must be 64 hex chars")
 
         p_tx = json.dumps({"jsonrpc": "2.0", "id": 1,
-                           "method": "eth_getTransactionByHash", "params": [tx]})
+                           "method": "eth_getTransactionByHash", "params": ["0x" + tx]})
         p_rc = json.dumps({"jsonrpc": "2.0", "id": 1,
-                           "method": "eth_getTransactionReceipt", "params": [tx]})
+                           "method": "eth_getTransactionReceipt", "params": ["0x" + tx]})
         calls = [(RPC_A + "tx", p_tx), (RPC_A + "rc", p_rc),
                  (RPC_B + "tx", p_tx), (RPC_B + "rc", p_rc)]
 
