@@ -5,8 +5,8 @@ from genlayer import *
 # GEN escrow on GenLayer in wei (10**18); the watched ETH transfer in wei
 # (10**18). The threshold is compared with the transfer value directly.
 #
-# No clock: every time signal is a block height from two indexers, and each
-# guard is a boolean - their tips can differ by hundreds of blocks.
+# No clock: every time signal is a block height from two RPC providers, and
+# each guard is a boolean - their tips can differ by a few blocks.
 
 GEN_DECIMALS = 18
 ETH_DECIMALS = 18
@@ -18,12 +18,11 @@ LAPSE_BLOCKS = 100000
 # pool cannot be closed until this many blocks after its window ends.
 FILING_BLOCKS = 1200
 
-BS_TX = "https://eth.blockscout.com/api/v2/transactions/"
-BS_TIP = "https://eth.blockscout.com/api/v2/main-page/blocks"
-RS = "https://api.routescan.io/v2/network/mainnet/evm/1/etherscan/api"
-RS_TX = RS + "?module=proxy&action=eth_getTransactionByHash&txhash="
-RS_RC = RS + "?module=proxy&action=eth_getTransactionReceipt&txhash="
-RS_TIP = RS + "?module=proxy&action=eth_blockNumber"
+# Two independent JSON-RPC operators. The trailing marker only distinguishes
+# the two calls per operator; RPC servers ignore unknown query parameters.
+RPC_A = "https://ethereum-rpc.publicnode.com/?m="
+RPC_B = "https://1rpc.io/eth?m="
+HDR = {"content-type": "application/json"}
 
 
 class CoverPool(gl.Contract):
@@ -32,7 +31,7 @@ class CoverPool(gl.Contract):
     The underwriter funds it and freezes the only event that can pay: one
     watched address sending at least `threshold` wei in one successful
     transaction inside one block range. Buyers pay a premium and are paid pro
-    rata if it happens; nobody votes, and two indexers must agree."""
+    rata if it happens; nobody votes, and two providers must agree."""
 
     pools: TreeMap[str, str]
     positions: TreeMap[str, str]
@@ -124,27 +123,22 @@ class CoverPool(gl.Contract):
 
     # ---------------- the block clock, as a boolean ----------------
 
-    def _bs_height(self, body: str) -> int:
-        try:
-            blocks = json.loads(body)
-        except Exception:
-            return 0
-        if not isinstance(blocks, list) or not blocks:
-            return 0
-        h = blocks[0].get("height") if isinstance(blocks[0], dict) else None
-        return h if isinstance(h, int) and h > 0 else 0
-
     def _tip(self) -> int:
         """The fresher of the two tips, or 0 when either is unreadable."""
+        payload = json.dumps({"jsonrpc": "2.0", "id": 1,
+                              "method": "eth_blockNumber", "params": []})
+
         def run() -> int:
             a = 0
             b = 0
             try:
-                a = self._bs_height(self._body(gl.nondet.web.get(BS_TIP)))
+                a = self._hex_int(self._body(gl.nondet.web.post(
+                    RPC_A + "tip", body=payload, headers=HDR)))
             except Exception:
                 a = 0
             try:
-                b = self._hex_int(self._body(gl.nondet.web.get(RS_TIP)))
+                b = self._hex_int(self._body(gl.nondet.web.post(
+                    RPC_B + "tip", body=payload, headers=HDR)))
             except Exception:
                 b = 0
             if a <= 0 or b <= 0:
@@ -162,38 +156,9 @@ class CoverPool(gl.Contract):
             return False
         return t < int(block) if before else t > int(block)
 
-    # ---------------- per-source adapters ----------------
+    # ---------------- one transaction, as two providers saw it ----------------
 
-    def _bs_tx(self, body: str, txid: str) -> dict:
-        out = {"found": False, "from": "", "to": "", "value": 0, "block": 0, "ok": False}
-        try:
-            data = json.loads(body)
-        except Exception:
-            return out
-        if not isinstance(data, dict) or str(data.get("hash", "")).lower() != txid:
-            return out
-        blk = data.get("block_number")
-        if not isinstance(blk, int) or blk <= 0:
-            return out
-        frm = data.get("from")
-        if isinstance(frm, dict):
-            frm = frm.get("hash")
-        to = data.get("to")
-        if isinstance(to, dict):
-            to = to.get("hash")
-        try:
-            val = int(str(data.get("value") or "0"))
-        except ValueError:
-            return out
-        out["found"] = True
-        out["from"] = str(frm or "").lower()
-        out["to"] = str(to or "").lower()
-        out["value"] = val
-        out["block"] = blk
-        out["ok"] = data.get("result") == "success"
-        return out
-
-    def _rs_tx(self, body_tx: str, body_rc: str, txid: str) -> dict:
+    def _rpc_tx(self, body_tx: str, body_rc: str, txid: str) -> dict:
         out = {"found": False, "from": "", "to": "", "value": 0, "block": 0, "ok": False}
         try:
             tx = json.loads(body_tx)
@@ -235,17 +200,17 @@ class CoverPool(gl.Contract):
     def _verdict(self, a: dict, b: dict, d: dict) -> str:
         # Fixed order: the reason is part of what validators agree on.
         if not a["found"]:
-            return "blockscout has no such transaction"
+            return "the first provider has no such transaction"
         if not b["found"]:
-            return "routescan has no such transaction"
+            return "the second provider has no such transaction"
         if a["block"] != b["block"]:
-            return "the indexers disagree on the block"
+            return "the providers disagree on the block"
         if a["from"] != b["from"] or a["to"] != b["to"]:
-            return "the indexers disagree on the transfer"
+            return "the providers disagree on the transfer"
         if a["value"] != b["value"]:
-            return "the indexers disagree on the value"
+            return "the providers disagree on the value"
         if a["ok"] != b["ok"]:
-            return "the indexers disagree on success"
+            return "the providers disagree on success"
         if not a["ok"]:
             return "the transaction failed"
         if a["block"] < int(d["from_block"]):
@@ -353,7 +318,7 @@ class CoverPool(gl.Contract):
 
     @gl.public.write
     def observe(self, pool_id: str, txid: str) -> str:
-        """A covered party files one txid; both indexers must agree on it."""
+        """A covered party files one txid; both providers must agree on it."""
         d = self._load(pool_id)
         if str(d["status"]) != OPEN:
             raise gl.vm.UserError("Pool is " + str(d["status"]))
@@ -364,19 +329,24 @@ class CoverPool(gl.Contract):
         if not tx:
             raise gl.vm.UserError("txid must be 64 hex chars")
 
-        urls = [BS_TX + tx, RS_TX + tx, RS_RC + tx]
+        p_tx = json.dumps({"jsonrpc": "2.0", "id": 1,
+                           "method": "eth_getTransactionByHash", "params": [tx]})
+        p_rc = json.dumps({"jsonrpc": "2.0", "id": 1,
+                           "method": "eth_getTransactionReceipt", "params": [tx]})
+        calls = [(RPC_A + "tx", p_tx), (RPC_A + "rc", p_rc),
+                 (RPC_B + "tx", p_tx), (RPC_B + "rc", p_rc)]
 
         def run() -> dict:
             bodies = []
-            for url in urls:
+            for url, payload in calls:
                 body = ""
                 try:
-                    body = self._body(gl.nondet.web.get(url))
+                    body = self._body(gl.nondet.web.post(url, body=payload, headers=HDR))
                 except Exception:
                     body = ""
                 bodies.append(body)
-            a = self._bs_tx(bodies[0], tx)
-            b = self._rs_tx(bodies[1], bodies[2], tx)
+            a = self._rpc_tx(bodies[0], bodies[1], tx)
+            b = self._rpc_tx(bodies[2], bodies[3], tx)
             reason = self._verdict(a, b, d)
             return {"a": [a["found"], a["from"], a["to"], a["value"], a["block"], a["ok"]],
                     "b": [b["found"], b["from"], b["to"], b["value"], b["block"], b["ok"]],

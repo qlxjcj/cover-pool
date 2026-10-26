@@ -1,10 +1,9 @@
 """Fixtures for Cover Pool direct-mode tests.
 
-Both payloads are the real shapes: blockscout returns `hash`, `block_number`,
-`from.hash`, `to.hash`, `value` (decimal string) and `result`; routescan is an
-Etherscan-compatible proxy returning `result.blockNumber` / `value` as hex and
-the receipt's `status` as `0x1`. The two tips are hex strings and are allowed to
-differ — the contract only ever reads a boolean out of them.
+Both providers answer the same JSON-RPC envelope, so one parser handles both:
+`eth_getTransactionByHash` gives blockNumber / from / to / value, and
+`eth_getTransactionReceipt` gives status. The trailing `?m=` marker keeps the
+two calls per provider apart (and is ignored by the RPC servers).
 
 Direct mode does not track native value flow, so the same two accounting hooks
 are installed, and a refused payable call puts the value back.
@@ -45,51 +44,44 @@ def hx(n: int) -> str:
     return hex(int(n))
 
 
-def bs_body(txid=TXID, frm=TRIGGER, to=DEST, value=VALUE, block=TX_BLOCK,
-            result="success"):
-    return json.dumps({"hash": txid, "block_number": block,
-                       "from": {"hash": frm}, "to": {"hash": to},
-                       "value": str(value), "result": result})
-
-
-def rs_tx_body(txid=TXID, frm=TRIGGER, to=DEST, value=VALUE, block=TX_BLOCK):
+def tx_body(txid=TXID, frm=TRIGGER, to=DEST, value=VALUE, block=TX_BLOCK):
     return json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
         "hash": txid, "blockNumber": hx(block), "from": frm, "to": to,
         "value": hex(value)}})
 
 
-def rs_rc_body(txid=TXID, ok=True, block=TX_BLOCK):
+def rc_body(txid=TXID, ok=True):
     return json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
-        "transactionHash": txid, "blockNumber": hx(block),
-        "status": "0x1" if ok else "0x0"}})
+        "transactionHash": txid, "status": "0x1" if ok else "0x0"}})
 
 
-def remock(vm, bs=None, tx=None, rc=None, bs_tip=TIP, rs_tip=TIP):
+def remock(vm, a_tx=None, a_rc=None, b_tx=None, b_rc=None, tip_a=TIP, tip_b=TIP):
     vm.clear_mocks()
-    if bs is not None:
-        vm.mock_web(r".*blockscout\.com/api/v2/transactions/.*",
-                    {"method": "GET", "status": 200, "body": bs})
-    if tx is not None:
-        vm.mock_web(r".*action=eth_getTransactionByHash.*",
-                    {"method": "GET", "status": 200, "body": tx})
-    if rc is not None:
-        vm.mock_web(r".*action=eth_getTransactionReceipt.*",
-                    {"method": "GET", "status": 200, "body": rc})
-    vm.mock_web(r".*blockscout\.com/api/v2/main-page/blocks.*",
-                {"method": "GET", "status": 200,
-                 "body": json.dumps([{"height": bs_tip}])})
-    vm.mock_web(r".*action=eth_blockNumber.*",
-                {"method": "GET", "status": 200,
-                 "body": json.dumps({"jsonrpc": "2.0", "result": hx(rs_tip), "id": 1})})
+    vm.mock_web(r".*publicnode\.com/\?m=tx.*",
+                {"method": "POST", "status": 200,
+                 "body": a_tx if a_tx is not None else tx_body()})
+    vm.mock_web(r".*publicnode\.com/\?m=rc.*",
+                {"method": "POST", "status": 200,
+                 "body": a_rc if a_rc is not None else rc_body()})
+    vm.mock_web(r".*1rpc\.io/eth\?m=tx.*",
+                {"method": "POST", "status": 200,
+                 "body": b_tx if b_tx is not None else tx_body()})
+    vm.mock_web(r".*1rpc\.io/eth\?m=rc.*",
+                {"method": "POST", "status": 200,
+                 "body": b_rc if b_rc is not None else rc_body()})
+    vm.mock_web(r".*publicnode\.com/\?m=tip.*",
+                {"method": "POST", "status": 200,
+                 "body": json.dumps({"jsonrpc": "2.0", "id": 1, "result": hx(tip_a)})})
+    vm.mock_web(r".*1rpc\.io/eth\?m=tip.*",
+                {"method": "POST", "status": 200,
+                 "body": json.dumps({"jsonrpc": "2.0", "id": 1, "result": hx(tip_b)})})
 
 
 def happy(vm, **over):
     remock(vm,
-           bs=over.get("bs", bs_body()),
-           tx=over.get("tx", rs_tx_body()),
-           rc=over.get("rc", rs_rc_body()),
-           bs_tip=over.get("bs_tip", TIP),
-           rs_tip=over.get("rs_tip", TIP))
+           a_tx=over.get("a_tx"), a_rc=over.get("a_rc"),
+           b_tx=over.get("b_tx"), b_rc=over.get("b_rc"),
+           tip_a=over.get("tip_a", TIP), tip_b=over.get("tip_b", TIP))
 
 
 @pytest.fixture

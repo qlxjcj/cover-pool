@@ -35,7 +35,7 @@ from conftest import (
     UNDERWRITER,
     VALUE,
     balance,
-    bs_body,
+    tx_body,
     buy,
     claim,
     close,
@@ -47,8 +47,7 @@ from conftest import (
     get_pool,
     position,
     remock,
-    rs_rc_body,
-    rs_tx_body,
+    rc_body,
     snapshot,
 )
 
@@ -136,7 +135,7 @@ def test_a_window_that_already_started_is_refused(pool):
 
 def test_an_unreadable_tip_blocks_the_open(pool):
     vm, c = pool
-    remock(vm, bs_tip=0)
+    remock(vm, tip_a=0)
     with pytest.raises(Exception):
         open_pool(vm, c)
     assert c.get_pool_count() == 0
@@ -231,7 +230,7 @@ def test_sales_stop_when_the_window_starts(pool):
     vm, c = pool
     pid = open_pool(vm, c)
     # the fresher tip has already reached the first covered block
-    remock(vm, bs_tip=FROM_BLOCK)
+    remock(vm, tip_a=FROM_BLOCK)
     with pytest.raises(Exception):
         buy(vm, c, pid, COVER)
     assert get_pool(vm, c, pid)["coverage_total"] == 0
@@ -288,30 +287,27 @@ def test_the_txid_must_be_64_hex(pool):
 
 def test_an_unknown_source_fails_closed(pool):
     vm, c = pool
-    remock(vm, bs=bs_body(txid="00" * 32), tx=rs_tx_body(txid="00" * 32),
-           rc=rs_rc_body(txid="00" * 32))
+    remock(vm, a_tx=tx_body(txid="00" * 32), b_tx=tx_body(txid="00" * 32))
     pid = open_pool(vm, c)
     buy(vm, c, pid, COVER)
     assert observe(vm, c, pid) == "NOT_PROVEN"
-    assert get_pool(vm, c, pid)["reason"] == "blockscout has no such transaction"
+    assert get_pool(vm, c, pid)["reason"] == "the first provider has no such transaction"
 
 
 def test_a_second_indexer_that_does_not_know_it_fails_closed(pool):
     vm, c = pool
-    remock(vm, bs=bs_body(), tx=rs_tx_body(txid="11" * 32),
-           rc=rs_rc_body(txid="11" * 32))
+    remock(vm, b_tx=tx_body(txid="11" * 32))
     pid = open_pool(vm, c)
     buy(vm, c, pid, COVER)
     assert observe(vm, c, pid) == "NOT_PROVEN"
-    assert get_pool(vm, c, pid)["reason"] == "routescan has no such transaction"
+    assert get_pool(vm, c, pid)["reason"] == "the second provider has no such transaction"
 
 
 @pytest.mark.parametrize("over,reason", [
-    ({"tx": rs_tx_body(block=TX_BLOCK + 1), "rc": rs_rc_body(block=TX_BLOCK + 1)},
-     "the indexers disagree on the block"),
-    ({"tx": rs_tx_body(to="0x" + "33" * 20)}, "the indexers disagree on the transfer"),
-    ({"tx": rs_tx_body(value=VALUE + 1)}, "the indexers disagree on the value"),
-    ({"bs": bs_body(result="error")}, "the indexers disagree on success"),
+    ({"b_tx": tx_body(block=TX_BLOCK + 1)}, "the providers disagree on the block"),
+    ({"b_tx": tx_body(to="0x" + "33" * 20)}, "the providers disagree on the transfer"),
+    ({"b_tx": tx_body(value=VALUE + 1)}, "the providers disagree on the value"),
+    ({"b_rc": rc_body(ok=False)}, "the providers disagree on success"),
 ])
 def test_any_fact_disagreement_fails_closed(pool, over, reason):
     vm, c = pool
@@ -325,7 +321,7 @@ def test_any_fact_disagreement_fails_closed(pool, over, reason):
 
 def test_a_failed_transfer_cannot_trigger(pool):
     vm, c = pool
-    happy(vm, bs=bs_body(result="error"), rc=rs_rc_body(ok=False))
+    happy(vm, a_rc=rc_body(ok=False), b_rc=rc_body(ok=False))
     pid = open_pool(vm, c)
     buy(vm, c, pid, COVER)
     assert observe(vm, c, pid) == "NOT_PROVEN"
@@ -333,15 +329,15 @@ def test_a_failed_transfer_cannot_trigger(pool):
 
 
 @pytest.mark.parametrize("over,reason", [
-    ({"bs": bs_body(block=FROM_BLOCK - 1), "tx": rs_tx_body(block=FROM_BLOCK - 1)},
+    ({"a_tx": tx_body(block=FROM_BLOCK - 1), "b_tx": tx_body(block=FROM_BLOCK - 1)},
      "the transfer is before the window"),
-    ({"bs": bs_body(block=TO_BLOCK + 1), "tx": rs_tx_body(block=TO_BLOCK + 1)},
+    ({"a_tx": tx_body(block=TO_BLOCK + 1), "b_tx": tx_body(block=TO_BLOCK + 1)},
      "the transfer is after the window"),
-    ({"bs": bs_body(frm="0x" + "55" * 20), "tx": rs_tx_body(frm="0x" + "55" * 20)},
+    ({"a_tx": tx_body(frm="0x" + "55" * 20), "b_tx": tx_body(frm="0x" + "55" * 20)},
      "the sender is not the covered address"),
-    ({"bs": bs_body(to=TRIGGER), "tx": rs_tx_body(to=TRIGGER)},
+    ({"a_tx": tx_body(to=TRIGGER), "b_tx": tx_body(to=TRIGGER)},
      "the transfer does not send funds away"),
-    ({"bs": bs_body(value=THRESHOLD - 1), "tx": rs_tx_body(value=THRESHOLD - 1)},
+    ({"a_tx": tx_body(value=THRESHOLD - 1), "b_tx": tx_body(value=THRESHOLD - 1)},
      "the transfer is below the threshold"),
 ])
 def test_a_transfer_that_does_not_meet_the_terms_is_refused(pool, over, reason):
@@ -355,8 +351,8 @@ def test_a_transfer_that_does_not_meet_the_terms_is_refused(pool, over, reason):
 
 def test_a_refusal_is_not_final(pool):
     vm, c = pool
-    remock(vm, bs=bs_body(frm="0x" + "55" * 20),
-           tx=rs_tx_body(frm="0x" + "55" * 20), rc=rs_rc_body())
+    remock(vm, a_tx=tx_body(frm="0x" + "55" * 20),
+           b_tx=tx_body(frm="0x" + "55" * 20))
     pid = open_pool(vm, c)
     buy(vm, c, pid, COVER)
     assert observe(vm, c, pid) == "NOT_PROVEN"
@@ -516,10 +512,10 @@ def test_closing_an_open_pool_waits_for_the_window(pool):
     pid = open_pool(vm, c)
     with pytest.raises(Exception):
         close(vm, c, pid)
-    remock(vm, bs_tip=TO_BLOCK + 1)
+    remock(vm, tip_a=TO_BLOCK + 1)
     with pytest.raises(Exception):
         close(vm, c, pid)
-    remock(vm, bs_tip=AFTER_FILING)
+    remock(vm, tip_a=AFTER_FILING)
     assert close(vm, c, pid) == "CLOSED"
 
 
@@ -527,7 +523,7 @@ def test_an_untriggered_pool_returns_everything(pool):
     vm, c = pool
     pid = open_pool(vm, c)
     buy(vm, c, pid, COVER)
-    remock(vm, bs_tip=AFTER_FILING)
+    remock(vm, tip_a=AFTER_FILING)
     before = balance(vm, UNDERWRITER)
     assert close(vm, c, pid) == "CLOSED"
     assert balance(vm, UNDERWRITER) == before + FUNDED + PREMIUM
@@ -544,10 +540,10 @@ def test_unclaimed_shares_are_reserved_then_lapse(pool):
     pid = open_pool(vm, c)
     buy(vm, c, pid, COVER)
     observe(vm, c, pid)
-    remock(vm, bs_tip=AFTER_FILING)          # window over, cover still claimable
+    remock(vm, tip_a=AFTER_FILING)          # window over, cover still claimable
     with pytest.raises(Exception):
         close(vm, c, pid)
-    remock(vm, bs_tip=TO_BLOCK + 100000 + 10)  # the lapse has passed
+    remock(vm, tip_a=TO_BLOCK + 100000 + 10)  # the lapse has passed
     before = balance(vm, UNDERWRITER)
     assert close(vm, c, pid) == "CLOSED"
     assert balance(vm, UNDERWRITER) == before + FUNDED + PREMIUM
@@ -570,7 +566,7 @@ def test_a_fully_claimed_pool_closes_at_once(pool):
 def test_a_closed_pool_cannot_move_again(pool):
     vm, c = pool
     pid = open_pool(vm, c)
-    remock(vm, bs_tip=AFTER_FILING)
+    remock(vm, tip_a=AFTER_FILING)
     close(vm, c, pid)
     with pytest.raises(Exception):
         close(vm, c, pid)
@@ -587,7 +583,7 @@ def test_two_pools_never_mix_funds(pool):
     buy(vm, c, b, COVER, sender=BUYER2)
     observe(vm, c, a, sender=BUYER1)
     claim(vm, c, a, sender=BUYER1)
-    remock(vm, bs_tip=AFTER_FILING)
+    remock(vm, tip_a=AFTER_FILING)
     close(vm, c, b)
     assert get_pool(vm, c, b)["paid_total"] == 0
     assert get_pool(vm, c, b)["refunded"] == 2 * FUNDED + PREMIUM
@@ -626,7 +622,7 @@ def test_money_is_conserved_on_every_path(pool):
 
     quiet = open_pool(vm, c)
     buy(vm, c, quiet, COVER)
-    remock(vm, bs_tip=AFTER_FILING)
+    remock(vm, tip_a=AFTER_FILING)
     close(vm, c, quiet)
     for pid in (paid, quiet):
         d = get_pool(vm, c, pid)
